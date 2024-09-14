@@ -14,9 +14,6 @@ library(patchwork) # Mehrere Diagramme in einem Layout
 
 # Grundeinstellungen ------------------------------------------------------
 
-# Arbeitsverzeichnis festlegen
-setwd("/Users/davidtrogemann/Documents/Data Science/Vogelerkennungen/")
-
 # Weitere Verzeichnisse definieren
 pfad_arbeitsverzeichnis <- getwd()
 pfad_skripte <- file.path(pfad_arbeitsverzeichnis, "R")

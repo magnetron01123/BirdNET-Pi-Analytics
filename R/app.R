@@ -14,9 +14,6 @@ library(rnaturalearth) # Karten für Plots
 
 # Grundeinstellungen ------------------------------------------------------
 
-# Arbeitsverzeichnis festlegen
-setwd("/Users/davidtrogemann/Documents/Data Science/Vogelbeobachtung/")
-
 # Weitere Verzeichnisse definieren
 pfad_arbeitsverzeichnis <- getwd()
 pfad_datensatz <- file.path(pfad_arbeitsverzeichnis, "Datensatz")

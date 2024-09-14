@@ -9,9 +9,6 @@ library(rdwd) # Wetterdaten vom DWD
 
 # Grundeinstellungen ------------------------------------------------------
 
-# Arbeitsverzeichnis festlegen
-setwd("/Users/davidtrogemann/Documents/Data Science/Vogelbeobachtung/")
-
 # Verzeichnisse definieren
 pfad_arbeitsverzeichnis <- getwd()
 pfad_datensatz <- file.path(pfad_arbeitsverzeichnis, "Datensatz")
