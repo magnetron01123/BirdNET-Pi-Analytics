@@ -624,7 +624,7 @@ diagramme$heatmap_vogelaktivitaet <- {
     geom_tile(color = "white") +
     scale_fill_gradientn(
       colors = c("white", "red"),
-      na.value = "black"
+      na.value = "grey"
     ) +
     scale_x_date(
       date_labels = "%B %Y", 
@@ -686,7 +686,7 @@ diagramme$heatmap_vogelaktivitaet <- {
     scale_fill_gradient(
       low = "white", 
       high = "red",
-      na.value = "black"
+      na.value = "grey"
     ) +
     scale_x_date(
       date_labels = "%B %Y", 
@@ -734,7 +734,7 @@ diagramme$heatmap_vogelaktivitaet <- {
         "in Büngern (Rhede)"),
       caption = str_glue(
         "N = {format(nrow(erkennungen), big.mark = '.', decimal.mark = ',')}; ",
-        "Unterbrechungen in schwarz"
+        "Unterbrechungen in grau"
       )
     ) +
     plot_layout(
