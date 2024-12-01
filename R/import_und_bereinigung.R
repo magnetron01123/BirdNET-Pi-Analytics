@@ -7,18 +7,13 @@ library(tidyverse) # Sammlung von Paketen für Data Science
 library(rdwd) # Wetterdaten vom DWD
 
 
-# Grundeinstellungen ------------------------------------------------------
+# Verzeichnisse definieren ------------------------------------------------
 
-# Verzeichnisse definieren
 pfad_arbeitsverzeichnis <- getwd()
+
 pfad_datensatz <- file.path(pfad_arbeitsverzeichnis, "Datensatz")
+
 pfad_zwischenergebnisse <- file.path(pfad_arbeitsverzeichnis, "Zwischenergebnisse")
-
-# Sprache ändern
-Sys.setlocale("LC_TIME", "de_DE.UTF-8")
-
-# Aktuelles Datum
-heutiges_datum <- Sys.Date() # für Dateinamen
 
 
 # Datenimport -------------------------------------------------------------
@@ -31,7 +26,7 @@ glimpse(erkennungen_rohdaten)
 
 # Datenbereinigung --------------------------------------------------------
 
-# Datentypen korrigieren
+# Variablen benennen und Datentypen korrigieren
 erkennungen_bereinigt <- 
   erkennungen_rohdaten |> 
   rename(
@@ -53,9 +48,7 @@ erkennungen_bereinigt <-
     deutscher_name = as.factor(deutscher_name),
     kalenderwoche = as.integer(kalenderwoche),
   ) |>
-  select(-dateiname, -ueberlappung) |>
-  # Doppelte Datensätze entfernen
-  distinct()
+  select(-dateiname, -ueberlappung)
 
 # Unterbrechungen in Erkennungen feststellen
 unterbrechungen <- 
@@ -64,38 +57,32 @@ unterbrechungen <-
     tage_differenz = as.integer(coalesce(c(NA, diff(datum)), 0))
   ) |>
   filter(tage_differenz > 1) |>
-  mutate(
+  transmute(
     ende = datum,
     beginn = datum - tage_differenz,
-    # + 2 um Beginn und Ende als Tage einzubeziehen
-    dauer_in_tage = as.integer(tage_differenz - 1 + 2)
-  ) |>
-  select(beginn, ende, dauer_in_tage)
+    dauer_in_tage = as.integer(ende - beginn + 1)
+  )
 
 print(unterbrechungen)
 
 # Beginn und Ende des Datensatzes festlegen
 beginn_erkennungen <- 
   erkennungen_bereinigt |>
-  group_by(datum) |>
-  summarise(
-    anzahl_erkennungen = n(),
-    .groups = "drop"
-  ) |> 
-  # Näherungswert für vollständige Tage
-  filter(anzahl_erkennungen >= 1000) |> 
-  slice_min(datum) |> 
-  pull(datum) |>
-  # Frühsten Beginn soll 01.04.2024 sein
-  pmax(as_date("2024-03-01"))
+  filter(datum >= as.Date("2024-03-01")) |>
+  count(datum, name = "anzahl_erkennungen") |>
+  # In dem Datensatz sind Testdaten vorhanden
+  # 500 ist ein Näherungswert für vollständige Tage
+  filter(anzahl_erkennungen >= 250) |>
+  slice_min(datum) |>
+  pull(datum)
 
 ende_erkennungen <- 
-  erkennungen_bereinigt |>
-  summarise(max_datum = max(datum)) |>
-  mutate(ende_datum = max_datum - days(1)) |>
-  pull(ende_datum)
+  erkennungen_bereinigt |> 
+  pull(datum) |> 
+  # Das aktuellste Datum könnte eventuell noch nicht abgeschlossen sein
+  max() - 1
 
-# Nur Vollständige Tage brücksichtigen
+# Nur Vollständige Tage ohne Testdaten berücksichtigen
 erkennungen_bereinigt <- 
   erkennungen_bereinigt |>
   filter(
@@ -107,31 +94,16 @@ erkennungen_bereinigt <-
   )
 
 
-# Datenzusammenstellung ---------------------------------------------------
-
-# Jahreszeiten ergänzen
-erkennungen_bereinigt_mit_jahreszeiten <- 
-  erkennungen_bereinigt |>
-  mutate(
-    jahreszeit = case_when(
-      datum >= make_date(year(datum), 3, 20) & datum < make_date(year(datum), 6, 21) ~ "Frühling",
-      datum >= make_date(year(datum), 6, 21) & datum < make_date(year(datum), 9, 23) ~ "Sommer",
-      datum >= make_date(year(datum), 9, 23) & datum < make_date(year(datum), 12, 21) ~ "Herbst",
-      datum >= make_date(year(datum) - 1, 12, 21) & datum < make_date(year(datum), 3, 20) ~ "Winter"
-    ),
-    jahreszeit = factor(jahreszeit, levels = c("Frühling", "Sommer", "Herbst", "Winter"))
-  )
-
-# Wetterdaten vom DWD ergänzen
+# Wetterdaten -------------------------------------------------------------
 
 # Längen- und Breitengrad der Erkennungen ermitteln
 laengengrad <- 
-  erkennungen_bereinigt_mit_jahreszeiten |>
+  erkennungen_bereinigt |>
   pull(laengengrad) |>
   last()
 
 breitengrad <- 
-  erkennungen_bereinigt_mit_jahreszeiten |>
+  erkennungen_bereinigt |>
   pull(breitengrad) |>
   last()
 
@@ -166,7 +138,6 @@ wetterstationen <-
   # Auswahl der nächsten Station mit der relevanten Variable
   slice_max(
     order_by = bis_datum, 
-    n = 1, 
     with_ties = FALSE
   ) |>
   ungroup() |>
@@ -181,7 +152,7 @@ wetterstationen <-
 
 print(wetterstationen)
 
-# Funktion zur Datenabfrage und -konvertierung
+# Funktion zur Datenabfrage vom DWD
 wetterdaten_laden <- 
   function(link) {
     dataDWD(link, read = FALSE, dir = tempdir()) |>
@@ -194,19 +165,24 @@ wetterdaten_laden <-
 wetterdaten <- 
   wetterstationen |>
   # Ein Tibble pro Variable erzeugen
-  mutate(einzelne_wetterdaten = map(link, wetterdaten_laden)) |>
-  # Tibbles kombinieren
-  select(einzelne_wetterdaten) |>
+  transmute(einzelne_wetterdaten = map(link, wetterdaten_laden)) |>
+  # Tibbles kobinieren
   unnest(cols = c(einzelne_wetterdaten)) |>
   # Alle Werte aufsummieren um Unterscheidung nach Station zu entfernen
   group_by(MESS_DATUM) |>
-  summarise(across(everything(), ~ sum(.x, na.rm = TRUE))) |>
-  ungroup() |>
+  summarise(
+    across(everything(), ~ sum(.x, na.rm = TRUE)),
+    .groups = "drop"
+  ) |>
   mutate(
-    datum = as.Date(MESS_DATUM),
+    datum = as_date(MESS_DATUM),
     uhrzeit = format(MESS_DATUM, "%H:%M:%S"),
     niederschlagsindikator = factor(
-      RS_IND.Niederschlagsindikator, 
+      if_else(
+        RS_IND.Niederschlagsindikator %in% 0:1,
+        RS_IND.Niederschlagsindikator,
+        NA
+      ),
       levels = c(0:1), 
       labels = c(
         "Kein Niederschlag", 
@@ -214,21 +190,22 @@ wetterdaten <-
       )
     ),
     # Im Datensatz sind offenbar NA als -1 angegeben
-    bedeckungsgrad_in_okta = ifelse(
-      V_N.Bedeckungsgrad == -1, NA, V_N.Bedeckungsgrad
-    ),
     bedeckungsgrad_in_okta = factor(
-      bedeckungsgrad_in_okta,
-      levels = c(0:8),
+      if_else(
+        V_N.Bedeckungsgrad %in% 0:8,
+        V_N.Bedeckungsgrad,
+        NA
+      ),
+      levels = 0:8,
       labels = c(
-        "wolkenlos", 
-        "sonnig", 
-        "heiter", 
-        "leicht bewölkt", 
-        "wolkig", 
-        "bewölkt", 
-        "stark bewölkt", 
-        "fast bedeckt", 
+        "wolkenlos",
+        "sonnig",
+        "heiter",
+        "leicht bewölkt",
+        "wolkig",
+        "bewölkt",
+        "stark bewölkt",
+        "fast bedeckt",
         "bedeckt"
       )
     )
@@ -250,17 +227,35 @@ wetterdaten <-
 summary(wetterdaten)
 glimpse(wetterdaten)
 
+# Datenzusammenstellung ---------------------------------------------------
+
+# Jahreszeiten ergänzen
+erkennungen_bereinigt_mit_jahreszeiten <- 
+  erkennungen_bereinigt |>
+  mutate(
+    jahreszeit = case_when(
+      datum >= make_date(year(datum), 3, 20) & datum < make_date(year(datum), 6, 21) ~ "Frühling",
+      datum >= make_date(year(datum), 6, 21) & datum < make_date(year(datum), 9, 23) ~ "Sommer",
+      datum >= make_date(year(datum), 9, 23) & datum < make_date(year(datum), 12, 21) ~ "Herbst",
+      datum >= make_date(year(datum) - 1, 12, 21) & datum < make_date(year(datum), 3, 20) ~ "Winter"
+    ),
+    jahreszeit = factor(jahreszeit, levels = c("Frühling", "Sommer", "Herbst", "Winter"))
+  )
+
 # Wetterbedigungen ergänzen
 erkennungen_bereinigt_mit_jahreszeiten_mit_wetter <- 
   erkennungen_bereinigt_mit_jahreszeiten |>
   mutate(stunde = hour(hms(uhrzeit))) |>
   left_join(
     wetterdaten |>
-      mutate(stunde = hour(hms(uhrzeit))),
+      mutate(
+        stunde = hour(hms(uhrzeit)),
+        uhrzeit_wetter = uhrzeit  # Umbenennen der 'uhrzeit'-Spalte
+      ) |>
+      select(-uhrzeit),
     by = c("datum", "stunde")
   ) |>
-  select(-stunde, -uhrzeit.y) |>
-  rename(uhrzeit = uhrzeit.x)
+  select(-stunde)
 
 erkennungen <- erkennungen_bereinigt_mit_jahreszeiten_mit_wetter
 
@@ -271,10 +266,13 @@ view(erkennungen)
 
 # Zwischenergebnisse ------------------------------------------------------
 
+heutiges_datum <- Sys.Date()
+
 # Speichern als CSV
 write_csv(
   erkennungen, 
   file.path(
-    pfad_zwischenergebnisse, str_glue("erkennungen_{heutiges_datum}.csv")
+    pfad_zwischenergebnisse, 
+    str_glue("erkennungen_{heutiges_datum}.csv")
   )
 )

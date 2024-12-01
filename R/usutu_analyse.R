@@ -1,3 +1,10 @@
+# Pakete laden ------------------------------------------------------------
+library(tidyverse)
+library(scales)
+
+library(ggtext)
+
+
 # Grundeinstellungen ------------------------------------------------------
 
 # Weitere Verzeichnisse definieren
@@ -49,10 +56,12 @@ erkennungen_amseln |>
   geom_text(
     data = erkennungen_amseln |> 
       filter(anteil_amseln %in% range(anteil_amseln)),
-    aes(label = paste0(
+    aes(
+      label = paste0(
       label_number(big.mark = ".", decimal.mark = ",")(erkennungen_amseln), 
       " Amseln erkannt"
-    )),
+      )
+    ),
     vjust = -1.5
   ) +
   scale_x_date(
@@ -69,8 +78,9 @@ erkennungen_amseln |>
     caption = str_glue(
       "**Datenquelle:**<br>",
       "BirdNET-Pi, ein Gerät zur automatischen Erkennung von Vogelgesängen.<br>",
-      "Der Datensatz umfasst im Jahr 2024 insgesamt {label_number(big.mark = '.', accuracy = 1)(sum(erkennungen_amseln$erkennungen))} Vogelbeobachtungen.<br>",
-      "Im Durchschnitt werden pro Woche etwa {label_number(big.mark = '.', accuracy = 1)(median(erkennungen_amseln$erkennungen))} Vögel erkannt."
+      "Der Datensatz umfasst im Jahr 2024 insgesamt 
+      {label_number(big.mark = '.', accuracy = 1)(sum(erkennungen_amseln$erkennungen))} 
+      Vogelbeobachtungen.<br>"
     ),
     x = "Wöchentliche Erfassung",
     y = "Anteil der Amseln"
