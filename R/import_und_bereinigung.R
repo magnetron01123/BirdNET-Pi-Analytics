@@ -1,19 +1,13 @@
 # Pakete laden ------------------------------------------------------------
 
-# Tidyverse
-library(tidyverse) # Sammlung von Paketen für Data Science
-
-# API
-library(rdwd) # Wetterdaten vom DWD
+library(tidyverse)
+library(rdwd)
 
 
 # Verzeichnisse definieren ------------------------------------------------
 
-pfad_arbeitsverzeichnis <- getwd()
-
-pfad_datensatz <- file.path(pfad_arbeitsverzeichnis, "Datensatz")
-
-pfad_zwischenergebnisse <- file.path(pfad_arbeitsverzeichnis, "Zwischenergebnisse")
+pfad_datensatz <- file.path(getwd(), "Datensatz")
+pfad_zwischenergebnisse <- file.path(getwd(), "Zwischenergebnisse")
 
 
 # Datenimport -------------------------------------------------------------
@@ -28,110 +22,85 @@ glimpse(erkennungen_rohdaten)
 
 # Variablen benennen und Datentypen korrigieren
 erkennungen_bereinigt <- 
-  erkennungen_rohdaten |> 
-  rename(
-    datum = Date,
-    uhrzeit = Time,
-    wissenschaftlicher_name = Sci_Name,
-    deutscher_name = Com_Name,
-    breitengrad = Lat,
-    laengengrad = Lon,
-    empfindlichkeit = Sens,
-    ueberlappung = Overlap,
-    dateiname = File_Name,
+  erkennungen_rohdaten |>
+  transmute(
+    zeitstempel = ymd_hms(paste(Date, Time)),
+    wissenschaftlicher_name = as.factor(Sci_Name),
+    deutscher_name = as.factor(Com_Name),
     erkennungswahrscheinlichkeit = Confidence,
     schwellenwert = Cutoff,
-    kalenderwoche = Week
-  ) |>
-  mutate(
-    wissenschaftlicher_name = as.factor(wissenschaftlicher_name),
-    deutscher_name = as.factor(deutscher_name),
-    kalenderwoche = as.integer(kalenderwoche),
-  ) |>
-  select(-dateiname, -ueberlappung)
-
-# Unterbrechungen in Erkennungen feststellen
-unterbrechungen <- 
-  erkennungen_bereinigt |>
-  mutate(
-    tage_differenz = as.integer(coalesce(c(NA, diff(datum)), 0))
-  ) |>
-  filter(tage_differenz > 1) |>
-  transmute(
-    ende = datum,
-    beginn = datum - tage_differenz,
-    dauer_in_tage = as.integer(ende - beginn + 1)
+    empfindlichkeit = Sens,
+    breitengrad = Lat,
+    laengengrad = Lon,
+    ueberlappung = Overlap
   )
 
-print(unterbrechungen)
+# Unterbrechungen in Erkennungen feststellen
+zeitraum_unterbrechungen <- 
+  erkennungen_bereinigt |>
+  arrange(zeitstempel) |> 
+  mutate(
+    datum = date(zeitstempel),
+    tage_differenz = datum - lag(datum)
+  ) |> 
+  drop_na() |> 
+  filter(tage_differenz > 1) |> 
+  transmute(
+    beginn = datum - tage_differenz,
+    ende = datum,
+    # +1 damit Beginn und Ende als Tag berücksichtigt werden
+    dauer = ende - beginn + 1
+  )
+
+print(zeitraum_unterbrechungen)
 
 # Beginn und Ende des Datensatzes festlegen
-beginn_erkennungen <- 
-  erkennungen_bereinigt |>
-  filter(datum >= as.Date("2024-03-01")) |>
-  count(datum, name = "anzahl_erkennungen") |>
-  # In dem Datensatz sind Testdaten vorhanden
-  # 500 ist ein Näherungswert für vollständige Tage
-  filter(anzahl_erkennungen >= 250) |>
-  slice_min(datum) |>
-  pull(datum)
+zeitraum_erkennungen <- 
+  tibble(
+    beginn = erkennungen_bereinigt  |> 
+      filter(zeitstempel >= as_datetime("2024-03-01")) |> 
+      count(datum = date(zeitstempel)) |> 
+      filter(n >= 250) |> 
+      summarise(beginn = min(datum)) |> 
+      pull(beginn),
+    ende = date(max(erkennungen_bereinigt$zeitstempel)) - 1
+  )
 
-ende_erkennungen <- 
-  erkennungen_bereinigt |> 
-  pull(datum) |> 
-  # Das aktuellste Datum könnte eventuell noch nicht abgeschlossen sein
-  max() - 1
+print(zeitraum_erkennungen)
 
 # Nur Vollständige Tage ohne Testdaten berücksichtigen
 erkennungen_bereinigt <- 
-  erkennungen_bereinigt |>
+  erkennungen_bereinigt |> 
   filter(
-    # Filtere Datensätze mit Beginn und Ende der Unterbrechung heraus
-    # Unterbrochene Tage sind bereits im Datensatz nicht vorhanden
-    !(datum %in% unterbrechungen$beginn | datum %in% unterbrechungen$ende),
-    # Filtere Datensätze vor Beginn und nach Ende heraus
-    datum >= beginn_erkennungen & datum <= ende_erkennungen
+    between(date(zeitstempel), zeitraum_erkennungen$beginn, zeitraum_erkennungen$ende) & 
+      # Es müssen nur noch die unvollständigen Tage mit Beginn und Ende der Unterbrechung berücksichtigt werden
+      !(date(zeitstempel) %in% zeitraum_unterbrechungen$beginn 
+        | date(zeitstempel) %in% zeitraum_unterbrechungen$ende)
   )
 
 
 # Wetterdaten -------------------------------------------------------------
 
-# Längen- und Breitengrad der Erkennungen ermitteln
-laengengrad <- 
-  erkennungen_bereinigt |>
-  pull(laengengrad) |>
-  last()
-
-breitengrad <- 
-  erkennungen_bereinigt |>
-  pull(breitengrad) |>
-  last()
-
-# Auswahl der Variablen gemäß Dokumentation
-relevante_wettervariablen <- 
-  c(
-    "air_temperature", 
-    "pressure",
-    "soil_temperature", 
-    "sun",
-    "cloudiness",
-    "precipitation",
-    "wind"
-  )
-
 # Passende Wetterstation mit entsprechenden Daten finden
 wetterstationen <- 
   as_tibble(
     nearbyStations(
-      lat = breitengrad, 
-      lon = laengengrad, 
+      lat = last(pull(erkennungen_bereinigt, breitengrad)),
+      lon = last(pull(erkennungen_bereinigt, laengengrad)),
       radius = 50, 
       res = "hourly", 
       per = "recent", 
-      var = relevante_wettervariablen
+      var = c(
+        "air_temperature", 
+        "pressure",
+        "soil_temperature", 
+        "sun",
+        "cloudiness",
+        "precipitation",
+        "wind"
+      )
     )
   ) |>
-  # Fehlerhaften Datensatz entfernen
   drop_na() |>
   arrange(desc(bis_datum), dist) |>
   group_by(var) |>
@@ -164,19 +133,15 @@ wetterdaten_laden <-
 # Kombinierte Wetterdaten aus verschiedenen Quellen
 wetterdaten <- 
   wetterstationen |>
-  # Ein Tibble pro Variable erzeugen
   transmute(einzelne_wetterdaten = map(link, wetterdaten_laden)) |>
-  # Tibbles kobinieren
   unnest(cols = c(einzelne_wetterdaten)) |>
-  # Alle Werte aufsummieren um Unterscheidung nach Station zu entfernen
+  # Unterscheidung nach Station aufheben
   group_by(MESS_DATUM) |>
   summarise(
     across(everything(), ~ sum(.x, na.rm = TRUE)),
     .groups = "drop"
   ) |>
-  mutate(
-    datum = as_date(MESS_DATUM),
-    uhrzeit = format(MESS_DATUM, "%H:%M:%S"),
+  transmute(
     niederschlagsindikator = factor(
       if_else(
         RS_IND.Niederschlagsindikator %in% 0:1,
@@ -189,8 +154,7 @@ wetterdaten <-
         "Niederschlag"
       )
     ),
-    # Im Datensatz sind offenbar NA als -1 angegeben
-    bedeckungsgrad_in_okta = factor(
+    bedeckungsgrad= factor(
       if_else(
         V_N.Bedeckungsgrad %in% 0:8,
         V_N.Bedeckungsgrad,
@@ -208,67 +172,52 @@ wetterdaten <-
         "fast bedeckt",
         "bedeckt"
       )
-    )
-  ) |>
-  select(
-    datum, 
-    uhrzeit, 
-    lufttemperatur_in_grad = TT_TU.Lufttemperatur,
-    luftfeuchtigkeit_in_prozent = RF_TU.Relative_Feuchte,
-    luftdruck_in_hpa = P.Luftdruck_NN,
-    bodentemperatur_in_grad = V_TE005.Erdbodentemperatur_005cm,
-    niederschlagsindikator,
-    niederschlagshoehe_in_mm = R1.Niederschlagshoehe,
-    sonnenscheindauer_in_min = SD_SO.Sonnenscheindauer,
-    bedeckungsgrad_in_okta,
-    windgeschwindigkeit_in_m_pro_s = F.Windgeschwindigkeit
+    ),
+    lufttemperatur = TT_TU.Lufttemperatur,
+    luftfeuchtigkeit = RF_TU.Relative_Feuchte,
+    luftdruck = P.Luftdruck_NN,
+    bodentemperatur = V_TE005.Erdbodentemperatur_005cm,
+    niederschlagshoehe = R1.Niederschlagshoehe,
+    sonnenscheindauer = SD_SO.Sonnenscheindauer,
+    windgeschwindigkeit = F.Windgeschwindigkeit,
+    wetterzeit = MESS_DATUM
   )
 
 summary(wetterdaten)
 glimpse(wetterdaten)
 
-# Datenzusammenstellung ---------------------------------------------------
 
-# Jahreszeiten ergänzen
-erkennungen_bereinigt_mit_jahreszeiten <- 
+# Daten ergänzen ----------------------------------------------------------
+
+erkennungen <-
   erkennungen_bereinigt |>
+  # Wetterdaten ergänzen
+  # Join nach Datum und Stunde wegen Wetterdaten auf Studenbasis
+  mutate(wetterzeit = ceiling_date(zeitstempel, "hour")) |>
+  left_join(wetterdaten) |> 
+  # Jahreszeiten ergänzen
   mutate(
     jahreszeit = case_when(
-      datum >= make_date(year(datum), 3, 20) & datum < make_date(year(datum), 6, 21) ~ "Frühling",
-      datum >= make_date(year(datum), 6, 21) & datum < make_date(year(datum), 9, 23) ~ "Sommer",
-      datum >= make_date(year(datum), 9, 23) & datum < make_date(year(datum), 12, 21) ~ "Herbst",
-      datum >= make_date(year(datum) - 1, 12, 21) & datum < make_date(year(datum), 3, 20) ~ "Winter"
+      date(zeitstempel) >= make_date(year(zeitstempel), 3, 20) & 
+        date(zeitstempel) < make_date(year(zeitstempel), 6, 21) ~ "Frühling",
+      date(zeitstempel) >= make_date(year(zeitstempel), 6, 21) & 
+        date(zeitstempel) < make_date(year(zeitstempel), 9, 23) ~ "Sommer",
+      date(zeitstempel) >= make_date(year(zeitstempel), 9, 23) & 
+        date(zeitstempel) < make_date(year(zeitstempel), 12, 21) ~ "Herbst",
+      (date(zeitstempel) >= make_date(year(zeitstempel) - 1, 12, 21) & 
+         date(zeitstempel) < make_date(year(zeitstempel), 3, 20)) ~ "Winter"
     ),
     jahreszeit = factor(jahreszeit, levels = c("Frühling", "Sommer", "Herbst", "Winter"))
   )
 
-# Wetterbedigungen ergänzen
-erkennungen_bereinigt_mit_jahreszeiten_mit_wetter <- 
-  erkennungen_bereinigt_mit_jahreszeiten |>
-  mutate(stunde = hour(hms(uhrzeit))) |>
-  left_join(
-    wetterdaten |>
-      mutate(
-        stunde = hour(hms(uhrzeit)),
-        uhrzeit_wetter = uhrzeit  # Umbenennen der 'uhrzeit'-Spalte
-      ) |>
-      select(-uhrzeit),
-    by = c("datum", "stunde")
-  ) |>
-  select(-stunde)
 
-erkennungen <- erkennungen_bereinigt_mit_jahreszeiten_mit_wetter
+# Export und Import -------------------------------------------------------
 
-summary(erkennungen)
-glimpse(erkennungen)
-view(erkennungen)
-
-
-# Zwischenergebnisse ------------------------------------------------------
+# Daten werden nur 1 Jahr vom DWD vorgehalten und daher Export nötig
 
 heutiges_datum <- Sys.Date()
 
-# Speichern als CSV
+# Aktuelle Ergebnisse als CSV exportieren
 write_csv(
   erkennungen, 
   file.path(
@@ -276,3 +225,19 @@ write_csv(
     str_glue("erkennungen_{heutiges_datum}.csv")
   )
 )
+
+# Ergebnisse aus der Vergangenheit anhängen
+erkennungen <- 
+  bind_rows(
+    erkennungen,
+    list.files(
+      path = pfad_zwischenergebnisse,  
+      pattern = "\\.csv$",             
+      full.names = TRUE                
+    ) |> 
+    map_dfr(~ read_csv(.x, locale = locale(encoding = "UTF-8")))
+  ) |> 
+  distinct()
+
+print(erkennungen)
+view(erkennungen)
