@@ -1,6 +1,7 @@
 # Pakete laden ------------------------------------------------------------
 
 library(tidyverse)
+library(janitor)
 library(rdwd)
 
 
@@ -23,16 +24,17 @@ glimpse(erkennungen_rohdaten)
 # Variablen benennen und Datentypen korrigieren
 erkennungen_bereinigt <- 
   erkennungen_rohdaten |>
+  clean_names() |> 
   transmute(
-    zeitstempel = ymd_hms(paste(Date, Time)),
-    wissenschaftlicher_name = as.factor(Sci_Name),
-    deutscher_name = as.factor(Com_Name),
-    erkennungswahrscheinlichkeit = Confidence,
-    schwellenwert = Cutoff,
-    empfindlichkeit = Sens,
-    breitengrad = Lat,
-    laengengrad = Lon,
-    ueberlappung = Overlap
+    zeitstempel = ymd_hms(paste(date, time)),
+    wissenschaftlicher_name = as.factor(sci_name),
+    deutscher_name = as.factor(com_name),
+    erkennungswahrscheinlichkeit = confidence,
+    schwellenwert = cutoff,
+    empfindlichkeit = sens,
+    breitengrad = lat,
+    laengengrad = lon,
+    ueberlappung = overlap
   )
 
 # Unterbrechungen in Erkennungen feststellen
@@ -41,12 +43,12 @@ zeitraum_unterbrechungen <-
   arrange(zeitstempel) |> 
   mutate(
     datum = date(zeitstempel),
-    tage_differenz = datum - lag(datum)
+    abstand = datum - lag(datum)
   ) |> 
   drop_na() |> 
-  filter(tage_differenz > 1) |> 
+  filter(abstand > 1) |> 
   transmute(
-    beginn = datum - tage_differenz,
+    beginn = datum - abstand,
     ende = datum,
     # +1 damit Beginn und Ende als Tag berücksichtigt werden
     dauer = ende - beginn + 1
@@ -63,7 +65,8 @@ zeitraum_erkennungen <-
       filter(n >= 250) |> 
       summarise(beginn = min(datum)) |> 
       pull(beginn),
-    ende = date(max(erkennungen_bereinigt$zeitstempel)) - 1
+    ende = date(max(erkennungen_bereinigt$zeitstempel)),
+    dauer = ende - beginn + 1
   )
 
 print(zeitraum_erkennungen)
@@ -73,35 +76,39 @@ erkennungen_bereinigt <-
   erkennungen_bereinigt |> 
   filter(
     between(date(zeitstempel), zeitraum_erkennungen$beginn, zeitraum_erkennungen$ende) & 
-      # Es müssen nur noch die unvollständigen Tage mit Beginn und Ende der Unterbrechung berücksichtigt werden
-      !(date(zeitstempel) %in% zeitraum_unterbrechungen$beginn 
-        | date(zeitstempel) %in% zeitraum_unterbrechungen$ende)
+    # Es müssen nur noch die unvollständigen Tage mit Beginn und Ende der Unterbrechung berücksichtigt werden
+    !(date(zeitstempel) %in% zeitraum_unterbrechungen$beginn | date(zeitstempel) %in% zeitraum_unterbrechungen$ende)
   )
 
 
 # Wetterdaten -------------------------------------------------------------
 
+# Variablen gemäß Dokumentation der API
+relevante_wettervariablen <-
+  c(
+    "air_temperature", 
+    "pressure",
+    "soil_temperature", 
+    "sun",
+    "cloudiness",
+    "precipitation",
+    "wind"
+  )
+
 # Passende Wetterstation mit entsprechenden Daten finden
 wetterstationen <- 
-  as_tibble(
-    nearbyStations(
-      lat = last(pull(erkennungen_bereinigt, breitengrad)),
-      lon = last(pull(erkennungen_bereinigt, laengengrad)),
-      radius = 50, 
-      res = "hourly", 
-      per = "recent", 
-      var = c(
-        "air_temperature", 
-        "pressure",
-        "soil_temperature", 
-        "sun",
-        "cloudiness",
-        "precipitation",
-        "wind"
-      )
-    )
-  ) |>
+  nearbyStations(
+    lat = last(pull(erkennungen_bereinigt, breitengrad)),
+    lon = last(pull(erkennungen_bereinigt, laengengrad)),
+    # Hoher Radius aufgrund weniger Stationen in der Nähe
+    radius = 50, 
+    res = "hourly", 
+    per = "recent", 
+    var = relevante_wettervariablen
+  ) |> 
+  as_tibble() |>
   drop_na() |>
+  clean_names() |> 
   arrange(desc(bis_datum), dist) |>
   group_by(var) |>
   # Auswahl der nächsten Station mit der relevanten Variable
@@ -110,16 +117,16 @@ wetterstationen <-
     with_ties = FALSE
   ) |>
   ungroup() |>
-  select(
-    station = Stations_id,
-    ort = Stationsname,
-    variable = var,
-    entfernung = dist,
+  transmute(
+    station = as.factor(stations_id),
+    ort = as.factor(stationsname),
+    wettervariable = as.factor(var),
+    entfernung = as.factor(dist),
     link = url
   ) |> 
   arrange(entfernung)
 
-print(wetterstationen)
+print(wetterstationen, n = Inf)
 
 # Funktion zur Datenabfrage vom DWD
 wetterdaten_laden <- 
@@ -127,25 +134,26 @@ wetterdaten_laden <-
     dataDWD(link, read = FALSE, dir = tempdir()) |>
     readDWD(varnames = TRUE) |>
     as_tibble() |>
-    select(MESS_DATUM, where(is.numeric), -STATIONS_ID)
+    clean_names(transliterations = "german")
   }
 
 # Kombinierte Wetterdaten aus verschiedenen Quellen
 wetterdaten <- 
   wetterstationen |>
   transmute(einzelne_wetterdaten = map(link, wetterdaten_laden)) |>
-  unnest(cols = c(einzelne_wetterdaten)) |>
+  unnest(einzelne_wetterdaten) |>
   # Unterscheidung nach Station aufheben
-  group_by(MESS_DATUM) |>
+  group_by(mess_datum) |>
   summarise(
-    across(everything(), ~ sum(.x, na.rm = TRUE)),
+    across(where(is.numeric), ~sum(.x, na.rm = TRUE)),
     .groups = "drop"
   ) |>
   transmute(
+    wetterzeit = mess_datum,
     niederschlagsindikator = factor(
       if_else(
-        RS_IND.Niederschlagsindikator %in% 0:1,
-        RS_IND.Niederschlagsindikator,
+        rs_ind_niederschlagsindikator %in% 0:1,
+        rs_ind_niederschlagsindikator,
         NA
       ),
       levels = c(0:1), 
@@ -156,8 +164,8 @@ wetterdaten <-
     ),
     bedeckungsgrad= factor(
       if_else(
-        V_N.Bedeckungsgrad %in% 0:8,
-        V_N.Bedeckungsgrad,
+        v_n_bedeckungsgrad %in% 0:8,
+        v_n_bedeckungsgrad,
         NA
       ),
       levels = 0:8,
@@ -173,56 +181,55 @@ wetterdaten <-
         "bedeckt"
       )
     ),
-    lufttemperatur = TT_TU.Lufttemperatur,
-    luftfeuchtigkeit = RF_TU.Relative_Feuchte,
-    luftdruck = P.Luftdruck_NN,
-    bodentemperatur = V_TE005.Erdbodentemperatur_005cm,
-    niederschlagshoehe = R1.Niederschlagshoehe,
-    sonnenscheindauer = SD_SO.Sonnenscheindauer,
-    windgeschwindigkeit = F.Windgeschwindigkeit,
-    wetterzeit = MESS_DATUM
+    lufttemperatur = tt_tu_lufttemperatur,
+    luftfeuchtigkeit = rf_tu_relative_feuchte,
+    luftdruck = p_luftdruck_nn,
+    bodentemperatur = v_te005_erdbodentemperatur_005cm,
+    niederschlagshoehe = r1_niederschlagshoehe,
+    sonnenscheindauer = sd_so_sonnenscheindauer,
+    windgeschwindigkeit = f_windgeschwindigkeit
   )
 
-summary(wetterdaten)
 glimpse(wetterdaten)
+summary(wetterdaten)
 
 
 # Daten ergänzen ----------------------------------------------------------
 
+# Wetterdaten und Jahreszeiten hinzufügen
+
 erkennungen <-
   erkennungen_bereinigt |>
-  # Wetterdaten ergänzen
-  # Join nach Datum und Stunde wegen Wetterdaten auf Studenbasis
-  mutate(wetterzeit = ceiling_date(zeitstempel, "hour")) |>
-  left_join(wetterdaten) |> 
-  # Jahreszeiten ergänzen
+  # Join By nach Wetterzeit aufgrund stündlicher Datenbasis
+  mutate(wetterzeit = floor_date(zeitstempel, "hour")) |>
+  # Inner Join damit Erkennungen und Wetter den gleichen Datenstand haben
+  inner_join(wetterdaten) |> 
   mutate(
-    jahreszeit = case_when(
-      date(zeitstempel) >= make_date(year(zeitstempel), 3, 20) & 
-        date(zeitstempel) < make_date(year(zeitstempel), 6, 21) ~ "Frühling",
-      date(zeitstempel) >= make_date(year(zeitstempel), 6, 21) & 
-        date(zeitstempel) < make_date(year(zeitstempel), 9, 23) ~ "Sommer",
-      date(zeitstempel) >= make_date(year(zeitstempel), 9, 23) & 
-        date(zeitstempel) < make_date(year(zeitstempel), 12, 21) ~ "Herbst",
-      (date(zeitstempel) >= make_date(year(zeitstempel) - 1, 12, 21) & 
-         date(zeitstempel) < make_date(year(zeitstempel), 3, 20)) ~ "Winter"
-    ),
-    jahreszeit = factor(jahreszeit, levels = c("Frühling", "Sommer", "Herbst", "Winter"))
-  )
+    jahreszeit = factor(
+      # Meteorlogische Ermittlung der Jahreszeiten - gleichmäßige Aufteilung der Monate
+      case_when(
+        month(zeitstempel) %in% 3:5  ~ "Frühling",
+        month(zeitstempel) %in% 6:8  ~ "Sommer",
+        month(zeitstempel) %in% 9:11 ~ "Herbst",
+        month(zeitstempel) %in% c(12, 1, 2) ~ "Winter",
+        TRUE ~ NA
+      ),
+      levels = c("Frühling", "Sommer", "Herbst", "Winter")
+    )
+  ) |> 
+  arrange(desc(zeitstempel))
 
 
 # Export und Import -------------------------------------------------------
 
 # Daten werden nur 1 Jahr vom DWD vorgehalten und daher Export nötig
 
-heutiges_datum <- Sys.Date()
-
 # Aktuelle Ergebnisse als CSV exportieren
 write_csv(
   erkennungen, 
   file.path(
     pfad_zwischenergebnisse, 
-    str_glue("erkennungen_{heutiges_datum}.csv")
+    paste0("erkennungen_", Sys.Date(), ".csv")
   )
 )
 
@@ -235,9 +242,10 @@ erkennungen <-
       pattern = "\\.csv$",             
       full.names = TRUE                
     ) |> 
-    map_dfr(~ read_csv(.x, locale = locale(encoding = "UTF-8")))
+    map_dfr(~read_csv(.x, locale = locale(encoding = "UTF-8")))
   ) |> 
-  distinct()
+  distinct() |> 
+  arrange(desc(zeitstempel))
 
 print(erkennungen)
 view(erkennungen)
