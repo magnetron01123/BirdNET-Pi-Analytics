@@ -27,8 +27,8 @@ erkennungen_bereinigt <-
   clean_names() |> 
   transmute(
     zeitstempel = ymd_hms(paste(date, time)),
-    wissenschaftlicher_name = as_factor(sci_name),
-    deutscher_name = as_factor(com_name),
+    wissenschaftlicher_name = fct_infreq(sci_name),
+    deutscher_name = fct_infreq(com_name),
     erkennungswahrscheinlichkeit = confidence,
     schwellenwert = cutoff,
     empfindlichkeit = sens,
@@ -118,10 +118,10 @@ wetterstationen <-
   ) |>
   ungroup() |>
   transmute(
-    station = as_factor(stations_id),
+    station = stations_id,
     ort = as_factor(stationsname),
     wettervariable = as_factor(var),
-    entfernung = as_factor(dist),
+    entfernung = dist,
     link = url
   )
 
@@ -155,9 +155,8 @@ wetterdaten <-
         rs_ind_niederschlagsindikator,
         NA
       ),
-      levels = c(0:1), 
       labels = c(
-        "Kein Niederschlag", 
+        "kein Niederschlag",
         "Niederschlag"
       )
     ),
@@ -167,7 +166,6 @@ wetterdaten <-
         v_n_bedeckungsgrad,
         NA
       ),
-      levels = 0:8,
       labels = c(
         "wolkenlos",
         "sonnig",
@@ -204,7 +202,7 @@ erkennungen <-
   # Inner Join damit Erkennungen und Wetter den gleichen Datenstand haben
   inner_join(wetterdaten) |> 
   mutate(
-    jahreszeit = fct(
+    jahreszeit = factor(
       # Meteorlogische Ermittlung der Jahreszeiten - gleichmäßige Aufteilung der Monate
       case_when(
         month(zeitstempel) %in% 3:5  ~ "Frühling",
