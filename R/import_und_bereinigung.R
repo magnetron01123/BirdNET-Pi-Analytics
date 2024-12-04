@@ -27,8 +27,8 @@ erkennungen_bereinigt <-
   clean_names() |> 
   transmute(
     zeitstempel = ymd_hms(paste(date, time)),
-    wissenschaftlicher_name = as.factor(sci_name),
-    deutscher_name = as.factor(com_name),
+    wissenschaftlicher_name = as_factor(sci_name),
+    deutscher_name = as_factor(com_name),
     erkennungswahrscheinlichkeit = confidence,
     schwellenwert = cutoff,
     empfindlichkeit = sens,
@@ -118,15 +118,14 @@ wetterstationen <-
   ) |>
   ungroup() |>
   transmute(
-    station = as.factor(stations_id),
-    ort = as.factor(stationsname),
-    wettervariable = as.factor(var),
-    entfernung = as.factor(dist),
+    station = as_factor(stations_id),
+    ort = as_factor(stationsname),
+    wettervariable = as_factor(var),
+    entfernung = as_factor(dist),
     link = url
-  ) |> 
-  arrange(entfernung)
+  )
 
-print(wetterstationen, n = Inf)
+print(wetterstationen)
 
 # Funktion zur Datenabfrage vom DWD
 wetterdaten_laden <- 
@@ -140,8 +139,8 @@ wetterdaten_laden <-
 # Kombinierte Wetterdaten aus verschiedenen Quellen
 wetterdaten <- 
   wetterstationen |>
-  transmute(einzelne_wetterdaten = map(link, wetterdaten_laden)) |>
-  unnest(einzelne_wetterdaten) |>
+  mutate(wetterdaten = map(link, wetterdaten_laden)) |>
+  unnest(wetterdaten) |>
   # Unterscheidung nach Station aufheben
   group_by(mess_datum) |>
   summarise(
@@ -162,7 +161,7 @@ wetterdaten <-
         "Niederschlag"
       )
     ),
-    bedeckungsgrad= factor(
+    bedeckungsgrad = factor(
       if_else(
         v_n_bedeckungsgrad %in% 0:8,
         v_n_bedeckungsgrad,
@@ -205,7 +204,7 @@ erkennungen <-
   # Inner Join damit Erkennungen und Wetter den gleichen Datenstand haben
   inner_join(wetterdaten) |> 
   mutate(
-    jahreszeit = factor(
+    jahreszeit = fct(
       # Meteorlogische Ermittlung der Jahreszeiten - gleichmäßige Aufteilung der Monate
       case_when(
         month(zeitstempel) %in% 3:5  ~ "Frühling",
