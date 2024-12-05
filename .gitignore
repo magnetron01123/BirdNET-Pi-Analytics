@@ -1,0 +1,41 @@
+# ----------------------------
+# 1. RStudio-spezifische Dateien
+# ----------------------------
+.Rproj.user/         # Temporäre Daten von RStudio-Projekten
+.Rhistory            # Verlauf der R-Konsole
+.RData               # Arbeitsbereich-Daten von R-Sitzungen
+.Ruserdata           # Benutzerspezifische Daten in RStudio
+.Rapp.history        # Verlauf von RStudio-Befehlen
+*.Rproj              # RStudio-Projektdateien
+
+# ----------------------------
+# 2. System- und Betriebssystem-Dateien
+# ----------------------------
+.DS_Store            # MacOS: Versteckte Metadaten-Dateien
+
+# ----------------------------
+# 3. Temporäre und generierte Dateien
+# ----------------------------
+*.log                # Logdateien (z. B. von Skripten)
+*.tmp                # Temporäre Dateien
+*.swp                # Swap-Dateien (z. B. von vim oder anderen Editoren)
+
+# ----------------------------
+# 4. Benutzerdefinierte Ordner und Dateien
+# ----------------------------
+# Ignoriere Inhalte der Ordner 'Datensatz' und 'Zwischenergebnisse',
+# behalte jedoch die Ordner selbst im Repository
+Datensatz/*
+!Datensatz/.gitkeep
+
+Zwischenergebnisse/*
+!Zwischenergebnisse/.gitkeep
+
+# ----------------------------
+# 5. Output- und Cache-Dateien
+# ----------------------------
+*.RData              # RData-Dateien (Speicherstände von R)
+*.rdb                # R-Datenbankdateien
+*.rds                # Serialisierte R-Datensätze
+*.sqlite             # SQLite-Datenbanken
+.Rproj.user
